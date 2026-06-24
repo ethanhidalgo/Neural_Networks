@@ -1,11 +1,17 @@
+## This fork is made to work with the latest python versions (3.8.x to 3.10.x)
+
+This is a fork of [Michael Nielsen](https://github.com/mnielsen/neural-networks-and-deep-learning) repository and is meant to be updated with the latest python and dependency versions. Most things have been updated and currently work. Any help is appreciated and if you spotted any problems, please open an issue and/or a PR.
+
 # Code samples for "Neural Networks and Deep Learning"
 
 This repository contains code samples for my book on ["Neural Networks
 and Deep Learning"](http://neuralnetworksanddeeplearning.com).
 
-The code is written for Python 2.6 or 2.7. There is a version for 
-Python 3.8-3.10 [here](https://github.com/unexploredtest/neural-networks-and-deep-learning). 
-I will not be updating the current repository for Python 3 compatibility.
+The code is written for Python 2.6 or 2.7. Michal Daniel Dobrzanski
+has a repository for Python 3
+[here](https://github.com/MichalDanielDobrzanski/DeepLearningPython35). I
+will not be updating the current repository for Python 3
+compatibility.
 
 The program `src/network3.py` uses version 0.6 or 0.7 of the Theano
 library.  It needs modification for compatibility with later versions
@@ -19,7 +25,7 @@ free to fork and modify the code.
 
 MIT License
 
-Copyright (c) 2012-2022 Michael Nielsen
+Copyright (c) 2012-2018 Michael Nielsen
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
