@@ -155,7 +155,7 @@ for name, g_fn, f_fn, dim in REPS:
 total_elapsed = time.time()-total_t0
 print(f"\nTotal training time: {total_elapsed/60:.1f} min", flush=True)
 
-pickle.dump(results, open("/home/claude/all_results.pkl","wb"))
+pickle.dump(results, open("./fast_results.pkl","wb"))
 
 # ---- Plot ----
 order = ["6D","5D","Quaternion","Axis-angle","Euler"]

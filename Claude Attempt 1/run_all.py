@@ -159,7 +159,7 @@ for name, g_fn, f_fn, dim in REPS:
     print(f"  [{name}] FINAL: mean={final_errors.mean():.2f}° max={final_errors.max():.2f}° std={final_errors.std():.2f}°", flush=True)
 
 # Save results
-pickle.dump(results, open("/home/claude/all_results.pkl", "wb"))
+pickle.dump(results, open("./all_results.pkl", "wb"))
 print("\nResults saved.", flush=True)
 
 # ---- Plotting ----
