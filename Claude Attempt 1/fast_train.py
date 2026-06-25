@@ -201,6 +201,6 @@ for (r,c),cell in tbl.get_celld().items():
 ax.set_xlabel("c. Errors at 500k iteration.", fontsize=9)
 
 plt.tight_layout()
-out="/mnt/user-data/outputs/sanity_test_results.png"
+out="./fast_test_results.png"
 plt.savefig(out, dpi=150, bbox_inches='tight')
 print(f"\nSaved: {out}")
