@@ -1,4 +1,4 @@
-"""Train all 5 representations sequentially and plot results."""
+"""Train all 4 representations sequentially and plot results."""
 import torch, torch.nn as nn, numpy as np, math, pickle, time, sys
 import matplotlib
 matplotlib.use('Agg')
@@ -22,7 +22,8 @@ def random_so3_batch(n, device):
     return R
 
 # ---- Representations ----
-def g_6d(M): return M[:,:,:2].reshape(-1,6)
+def g_6d(M):
+    return M[:,:,:2].reshape(-1,6)
 def f_6d(r):
     a1,a2=r[:,0:3],r[:,3:6]
     b1=nn.functional.normalize(a1,dim=1)
@@ -45,7 +46,6 @@ def g_quat(M):
         ci(2)*torch.sqrt(torch.clamp(M[:,2,2]+1,min=1e-8)),
         torch.zeros(B,device=dev)],dim=1)
     return torch.where((t.abs()>1e-7).unsqueeze(1),q_nz,q_z)
-
 def f_quat(q):
     q=nn.functional.normalize(q,dim=1)
     x,y,z,w=q[:,0],q[:,1],q[:,2],q[:,3]
@@ -61,7 +61,6 @@ def g_axisangle(M):
     ax=torch.stack([M[:,2,1]-M[:,1,2],M[:,0,2]-M[:,2,0],M[:,1,0]-M[:,0,1]],dim=1)
     ax=ax/(2*torch.sin(theta).unsqueeze(1)+1e-8)
     return ax*theta.unsqueeze(1)
-
 def f_axisangle(v):
     theta=v.norm(dim=1,keepdim=True).clamp(min=1e-8)
     ax=v/theta; theta=theta.squeeze(1)
@@ -78,7 +77,6 @@ def g_euler(M):
     x=torch.atan2(M[:,2,1],M[:,2,2]); y=torch.atan2(-M[:,2,0],sy); z=torch.atan2(M[:,1,0],M[:,0,0])
     xs=torch.atan2(-M[:,1,2],M[:,1,1]); zs=torch.zeros_like(z)
     return torch.stack([torch.where(singular,xs,x),y,torch.where(singular,zs,z)],dim=1)
-
 def f_euler(e):
     cx,sx=torch.cos(e[:,0]),torch.sin(e[:,0])
     cy,sy=torch.cos(e[:,1]),torch.sin(e[:,1])
@@ -91,7 +89,7 @@ def f_euler(e):
 
 REPS = [
     ("6D",          g_6d,        f_6d,        6),
-    ("5D",          g_quat,      f_quat,      4),
+ #   ("5D",          g_quat,      f_quat,      4),
     ("Quaternion",  g_quat,      f_quat,      4),
     ("Axis-angle",  g_axisangle, f_axisangle, 3),
     ("Euler",       g_euler,     f_euler,     3),
@@ -163,9 +161,14 @@ pickle.dump(results, open("./all_results.pkl", "wb"))
 print("\nResults saved.", flush=True)
 
 # ---- Plotting ----
-colors = {"6D":"red","5D":"#c8c800","Quaternion":"green","Axis-angle":"cyan","Euler":"blue"}
-styles = {"6D":"-","5D":"--","Quaternion":"-","Axis-angle":"-","Euler":"-"}
-order = ["6D","5D","Quaternion","Axis-angle","Euler"]
+colors = {"6D":"red","Quaternion":"green","Axis-angle":"cyan","Euler":"blue"}
+styles = {"6D":"-","Quaternion":"-","Axis-angle":"-","Euler":"-"}
+order = ["6D","Quaternion","Axis-angle","Euler"]
+#TODO: change back when you implement 5D
+#colors = {"6D":"red","5D":"#c8c800","Quaternion":"green","Axis-angle":"cyan","Euler":"blue"}
+#styles = {"6D":"-","5D":"--","Quaternion":"-","Axis-angle":"-","Euler":"-"}
+#order = ["6D","5D","Quaternion","Axis-angle","Euler"]
+
 
 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 fig.text(0.01, 0.97, "Sanity Test", fontsize=13, va='top', ha='left')
@@ -211,7 +214,6 @@ t = ax.table(cellText=table_data, colLabels=col_labels, loc='center', cellLoc='c
 t.auto_set_font_size(False); t.set_fontsize(9); t.scale(1.1, 1.6)
 for (row,col),cell in t.get_celld().items():
     if row==0: cell.set_text_props(fontweight='bold')
-    if row in (1,2) and col>0: cell.set_text_props(fontweight='bold')
 ax.set_xlabel("c. Errors at 500k iteration.", fontsize=9)
 
 plt.tight_layout()
