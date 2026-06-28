@@ -130,9 +130,10 @@ for name, g_fn, f_fn, dim in REPS:
             for pg in opt.param_groups: pg['lr'] = 1e-6
 
         M = random_so3_batch(BS, device)
+        # net transfers 9 so3 values into num of parameters for representation R
         r = net(M.reshape(BS, 9))
         Mp = f_fn(r)
-        loss = ((M - Mp)**2).sum(dim=(1,2)).mean()
+        loss = geodesic_deg(M, Mp).mean()
         opt.zero_grad(); loss.backward(); opt.step()
 
         if it % LOG_EVERY == 0:
@@ -157,7 +158,7 @@ for name, g_fn, f_fn, dim in REPS:
     print(f"  [{name}] FINAL: mean={final_errors.mean():.2f}° max={final_errors.max():.2f}° std={final_errors.std():.2f}°", flush=True)
 
 # Save results
-pickle.dump(results, open("./all_results.pkl", "wb"))
+pickle.dump(results, open("./geodesic.pkl", "wb"))
 print("\nResults saved.", flush=True)
 
 # ---- Plotting ----
@@ -217,6 +218,6 @@ for (row,col),cell in t.get_celld().items():
 ax.set_xlabel("c. Errors at 500k iteration.", fontsize=9)
 
 plt.tight_layout()
-out = "./sanity_test_results.png"
+out = "./geodesic.png"
 plt.savefig(out, dpi=150, bbox_inches='tight')
 print(f"\nPlot saved to {out}")
