@@ -1,4 +1,3 @@
-"""Train all 4 representations sequentially and plot results."""
 import torch, torch.nn as nn, numpy as np, math, pickle, time, sys
 import matplotlib
 matplotlib.use('Agg')

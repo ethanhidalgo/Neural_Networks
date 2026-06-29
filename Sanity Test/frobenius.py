@@ -1,4 +1,3 @@
-"""Train all 4 representations sequentially and plot results."""
 import torch, torch.nn as nn, numpy as np, math, pickle, time, sys
 import matplotlib
 matplotlib.use('Agg')
@@ -89,7 +88,7 @@ def f_euler(e):
 
 REPS = [
     ("6D",          g_6d,        f_6d,        6),
- #   ("5D",          g_quat,      f_quat,      4),
+ #   ("5D",          g_5d,      f_5d,      5),
     ("Quaternion",  g_quat,      f_quat,      4),
     ("Axis-angle",  g_axisangle, f_axisangle, 3),
     ("Euler",       g_euler,     f_euler,     3),
