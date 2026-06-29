@@ -21,6 +21,10 @@ def random_so3_batch(n, device):
     R[:,2,0]=(t*x*z-s*y).squeeze(1); R[:,2,1]=(t*y*z+s*x).squeeze(1); R[:,2,2]=(t*z*z+c).squeeze(1)
     return R
 
+def random_so3_batch(n, device):
+
+    return R
+
 # ---- Representations ----
 def g_6d(M):
     return M[:,:,:2].reshape(-1,6)
