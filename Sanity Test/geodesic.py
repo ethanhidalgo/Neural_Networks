@@ -8,17 +8,87 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}", flush=True)
 
 # ---- Rotation sampling ----
-def random_so3_batch(n, device):
-    axes = torch.randn(n, 3, device=device)
-    axes = axes / axes.norm(dim=1, keepdim=True)
-    angles = torch.rand(n, 1, device=device) * math.pi
-    c, s = torch.cos(angles), torch.sin(angles); t = 1 - c
-    x, y, z = axes[:,0:1], axes[:,1:2], axes[:,2:3]
-    R = torch.zeros(n, 3, 3, device=device)
-    R[:,0,0]=(t*x*x+c).squeeze(1); R[:,0,1]=(t*x*y-s*z).squeeze(1); R[:,0,2]=(t*x*z+s*y).squeeze(1)
-    R[:,1,0]=(t*x*y+s*z).squeeze(1); R[:,1,1]=(t*y*y+c).squeeze(1);  R[:,1,2]=(t*y*z-s*x).squeeze(1)
-    R[:,2,0]=(t*x*z-s*y).squeeze(1); R[:,2,1]=(t*y*z+s*x).squeeze(1); R[:,2,2]=(t*z*z+c).squeeze(1)
+EPS = 1e-6
+
+def sample_unit_sphere_batch(n):
+    """
+    Muller's method: sample n unit vectors uniformly on S^2.
+    Draw from isotropic Gaussian, normalize. Resample any degenerate vectors.
+    Returns: (n, 3) tensor of unit vectors.
+    """
+    v = torch.randn(n, 3)
+    norms = v.norm(dim=1, keepdim=True)
+    # Resample any nearly-zero vectors (extremely rare)
+    bad = (norms < 1e-10).squeeze(1)
+    while bad.any():
+        v[bad] = torch.randn(bad.sum(), 3)
+        norms[bad] = v[bad].norm(dim=1, keepdim=True)
+        bad = (norms < 1e-10).squeeze(1)
+    return v / norms
+
+def expmap_so3_batch(u):
+    """
+    Rodrigues exponential map from R^3 -> SO(3).
+    u is an axis-angle vector: direction = rotation axis, magnitude beta = rotation angle.
+
+    exp(K) = I + p*K + q*K^2
+    where K is the skew-symmetric matrix of u, and:
+      p = sin(beta)/beta       (with Taylor series near beta=0)
+      q = (1-cos(beta))/beta^2 (with Taylor series near beta=0)
+    """
+    beta = u.norm(dim=1)  # (n,)
+    small = beta < EPS
+
+    # --- p: sin(beta)/beta ---
+    p = torch.where(small,
+                    1 - beta ** 2 / 6 + beta ** 4 / 120,  # Taylor
+                    torch.sin(beta) / beta)  # exact
+
+    # --- q: (1-cos(beta))/beta^2 ---
+    q = torch.where(small,
+                    0.5 - beta ** 2 / 24 + beta ** 4 / 720,  # Taylor
+                    (1 - torch.cos(beta)) / beta ** 2)  # exact
+
+    a, b, c = u[:, 0], u[:, 1], u[:, 2]
+
+    # Skew-symmetric K for each sample
+    K = torch.zeros(u.shape[0], 3, 3, device=u.device)
+    K[:, 0, 1] = -c;
+    K[:, 0, 2] = b
+    K[:, 1, 0] = c;
+    K[:, 1, 2] = -a
+    K[:, 2, 0] = -b;
+    K[:, 2, 1] = a
+
+    K2 = K @ K  # (n,3,3)
+
+    I = torch.eye(3, device=u.device).unsqueeze(0).expand(u.shape[0], -1, -1)
+
+    p = p.view(-1, 1, 1)
+    q = q.view(-1, 1, 1)
+
+    R = I + p * K + q * K2  # (n,3,3)
     return R
+
+def random_so3_batch(n, device=None):
+    """
+    Drop-in replacement. Samples n rotation matrices uniformly from SO(3).
+
+    Steps:
+      1. Sample unit axis u via Muller's method (isotropic Gaussian + normalize)
+      2. Sample angle beta uniformly in [0, pi]
+      3. Form axis-angle vector: u * beta
+      4. Map to SO(3) via Rodrigues exponential map
+    """
+    axes = sample_unit_sphere_batch(n)  # (n, 3) unit vectors
+    betas = torch.rand(n, 1) * math.pi  # (n, 1) angles in [0, pi]
+    u = axes * betas  # (n, 3) axis-angle vectors
+
+    if device is not None:
+        u = u.to(device)
+
+    return expmap_so3_batch(u)  # (n, 3, 3)
+
 
 # ---- Representations ----
 def g_6d(M):
