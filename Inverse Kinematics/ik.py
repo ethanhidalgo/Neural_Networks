@@ -580,7 +580,7 @@ if __name__ == "__main__":
               f"max={final_errors.max():.4f} cm  "
               f"std={final_errors.std():.4f} cm", flush=True)
 
-    pickle.dump(results, open("ik_results.pkl", "wb"))
+    pickle.dump(results, open("./ik_results.pkl", "wb"))
     print("\nResults saved → ik_results.pkl", flush=True)
 
     # ---- plot ----------------------------------------------------------------
@@ -634,5 +634,5 @@ if __name__ == "__main__":
     ax.set_xlabel("c. Errors at final iteration.", fontsize=9)
 
     plt.tight_layout()
-    plt.savefig("ik_results.png", dpi=150, bbox_inches='tight')
+    plt.savefig("./ik_results.png", dpi=150, bbox_inches='tight')
     print("Plot saved → ik_results.png", flush=True)
