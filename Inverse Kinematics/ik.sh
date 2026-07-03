@@ -1,1 +1,1 @@
-python3 ik.py > ik.txt
+python3 new_ik.py | tee ik.txt
