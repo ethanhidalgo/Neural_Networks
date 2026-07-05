@@ -555,7 +555,7 @@ def evaluate(net, f_fn, rep_dim, test_loader, n_aug=3):
 if __name__ == "__main__":
     TRAIN_DIR   = "./training_set"
     TEST_DIR    = "./test_set"
-    TOTAL_ITERS = 1_960_000
+    TOTAL_ITERS = 50_000
     BATCH_SIZE  = 64
 
     # ---- load data -----------------------------------------------------------
