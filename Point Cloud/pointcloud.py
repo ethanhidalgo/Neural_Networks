@@ -82,13 +82,21 @@ def load_pointcloud_folder(folder):
 # 2.  Random SO(3) sampling (axis-angle, no cuda dependency)
 # =============================================================================
 
-def random_so3_batch(n):
-    """Sample n rotation matrices uniformly from SO(3) via axis-angle."""
-    theta = torch.FloatTensor(np.random.uniform(-1, 1, n) * np.pi)
+def random_so3_batch(n, dev=None):
+    """
+    Sample n rotation matrices uniformly from SO(3), entirely on `dev`.
+    Uses Muller's method for a uniform axis on S^2 then a uniform angle in
+    [0, pi] — all tensors allocated directly on the target device so there
+    is no CPU->GPU transfer per call.
+    """
+    if dev is None:
+        dev = torch.device('cpu')
+    # Uniform axis via Muller's method: isotropic Gaussian + normalize
+    axes  = torch.randn(n, 3, device=dev)
+    axes  = axes / axes.norm(dim=1, keepdim=True).clamp(min=1e-8)
+    # Uniform angle in [0, pi]
+    theta = torch.rand(n, device=dev) * math.pi
     sin   = torch.sin(theta)
-    axes  = torch.randn(n, 3)
-    norms = axes.norm(dim=1, keepdim=True).clamp(min=1e-8)
-    axes  = axes / norms
     qw = torch.cos(theta)
     qx = axes[:, 0] * sin
     qy = axes[:, 1] * sin
@@ -244,17 +252,22 @@ def train_one_rep(name, f_fn, rep_dim, train_clouds,
     mean_losses = []
     t0 = time.time()
 
+    # Pre-convert all training clouds to GPU tensors once — avoids a
+    # CPU->GPU transfer and a numpy->torch conversion on every iteration.
+    train_tensors = [
+        torch.FloatTensor(pc).to(device) for pc in train_clouds
+    ]
+
     for it in range(1, total_iters + 1):
-        # --- pick random reference cloud ---
-        pc_np    = train_clouds[np.random.randint(len(train_clouds))]
-        point_num = pc_np.shape[0]
+        # --- pick random reference cloud (already on device) ---
+        pc_ref_1 = train_tensors[np.random.randint(len(train_tensors))]
+        point_num = pc_ref_1.shape[0]
 
         # pc_ref: (batch, N, 3)
-        pc_ref = torch.FloatTensor(pc_np).to(device)
-        pc_ref = pc_ref.unsqueeze(0).expand(batch_size, -1, -1).contiguous()
+        pc_ref = pc_ref_1.unsqueeze(0).expand(batch_size, -1, -1).contiguous()
 
-        # gt rotations: (batch, 3, 3)
-        gt_R = random_so3_batch(batch_size).to(device)
+        # gt rotations sampled directly on device — no transfer needed
+        gt_R = random_so3_batch(batch_size, device)
 
         # pc_tgt = R @ pc_ref  (apply per-point)
         # gt_R: (B,3,3), pc_ref: (B,N,3)
@@ -271,7 +284,7 @@ def train_one_rep(name, f_fn, rep_dim, train_clouds,
         # output and ground-truth rotation matrices")
         loss = ((pred_R - gt_R) ** 2).mean()
 
-        opt.zero_grad()
+        opt.zero_grad(set_to_none=True)  # frees grad buffers instead of zeroing
         loss.backward()
         opt.step()
 
@@ -298,13 +311,15 @@ def evaluate(net, f_fn, rep_dim, test_clouds, n_aug=100):
     net.eval()
     all_errors = []
 
-    with torch.no_grad():
-        for pc_np in test_clouds:
-            point_num = pc_np.shape[0]
-            pc_ref = torch.FloatTensor(pc_np).to(device)
-            pc_ref = pc_ref.unsqueeze(0).expand(n_aug, -1, -1).contiguous()
+    # Pre-convert test clouds to device tensors once
+    test_tensors = [torch.FloatTensor(pc).to(device) for pc in test_clouds]
 
-            gt_R = random_so3_batch(n_aug).to(device)
+    with torch.no_grad():
+        for pc_ref_1 in test_tensors:
+            point_num = pc_ref_1.shape[0]
+            pc_ref = pc_ref_1.unsqueeze(0).expand(n_aug, -1, -1).contiguous()
+
+            gt_R = random_so3_batch(n_aug, device)
             pc_tgt = torch.bmm(
                 gt_R.unsqueeze(1).expand(-1, point_num, -1, -1).reshape(-1, 3, 3),
                 pc_ref.reshape(-1, 3, 1)
