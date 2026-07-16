@@ -605,7 +605,7 @@ def evaluate(net, f_fn, rep_dim, test_loader, n_aug=3):
 if __name__ == "__main__":
     TRAIN_DIR = "./training_set"
     TEST_DIR = "./test_set"
-    TOTAL_ITERS = 50_000
+    TOTAL_ITERS = 5_000
     BATCH_SIZE = 64
 
     # ---- load data -----------------------------------------------------------
@@ -694,7 +694,6 @@ if __name__ == "__main__":
     tbl.scale(1.1, 1.6)
     for (r, c), cell in tbl.get_celld().items():
         if r == 0:          cell.set_text_props(fontweight='bold')
-        if r == 1 and c > 0: cell.set_text_props(fontweight='bold')  # 6D row
     ax.set_xlabel("c. Errors at final iteration.", fontsize=9)
 
     plt.tight_layout()
