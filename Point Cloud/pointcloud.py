@@ -110,66 +110,116 @@ def random_so3_batch(n, dev=None):
     return torch.cat((r0.view(n,1,3), r1.view(n,1,3), r2.view(n,1,3)), 1)  # (n,3,3)
 
 # =============================================================================
-# 3.  Rotation representations (self-contained, no cuda hard-coding)
+# Rotation representations
 # =============================================================================
 
-def _normalize(v):
-    return nn.functional.normalize(v, dim=1)
-
 def g_6d(M):
-    """(B,3,3) -> (B,6)"""
     return M[:, :, :2].reshape(-1, 6)
 
 def f_6d(r):
-    """(B,6) -> (B,3,3)"""
     a1, a2 = r[:, 0:3], r[:, 3:6]
-    b1 = _normalize(a1)
-    b2 = _normalize(a2 - (b1 * a2).sum(1, keepdim=True) * b1)
+    b1 = nn.functional.normalize(a1, dim=1)
+    b2 = nn.functional.normalize(a2 - (b1 * a2).sum(1, keepdim=True) * b1, dim=1)
     b3 = torch.cross(b1, b2, dim=1)
     return torch.stack([b1, b2, b3], dim=2)
 
+def g_quat(M):
+    B, dev = M.shape[0], M.device
+    t    = M[:,0,0] + M[:,1,1] + M[:,2,2] + 1
+    q_nz = torch.stack([M[:,2,1]-M[:,1,2], M[:,0,2]-M[:,2,0],
+                         M[:,1,0]-M[:,0,1], t], dim=1)
+    sgn32 = torch.sign(M[:,2,1])
+    sgn32 = torch.where(sgn32 == 0, torch.ones_like(sgn32), sgn32)
+    def ci(i):
+        v = M[:,i,0] + M[:,0,i]
+        return torch.where(v > 0,  torch.ones(B, device=dev),
+               torch.where(v < 0, -torch.ones(B, device=dev), sgn32**(i+1)))
+    q_z = torch.stack([
+        torch.sqrt(torch.clamp(M[:,0,0]+1, min=1e-8)),
+        ci(1)*torch.sqrt(torch.clamp(M[:,1,1]+1, min=1e-8)),
+        ci(2)*torch.sqrt(torch.clamp(M[:,2,2]+1, min=1e-8)),
+        torch.zeros(B, device=dev)], dim=1)
+    return torch.where((t.abs() > 1e-7).unsqueeze(1), q_nz, q_z)
+
 def f_quat(q):
-    """(B,4) -> (B,3,3)"""
-    q  = _normalize(q)
+    q = nn.functional.normalize(q, dim=1)
     x, y, z, w = q[:,0], q[:,1], q[:,2], q[:,3]
-    R  = torch.zeros(q.shape[0], 3, 3, device=q.device)
+    R = torch.zeros(q.shape[0], 3, 3, device=q.device)
     R[:,0,0]=1-2*y*y-2*z*z; R[:,0,1]=2*x*y-2*z*w; R[:,0,2]=2*x*z+2*y*w
     R[:,1,0]=2*x*y+2*z*w;   R[:,1,1]=1-2*x*x-2*z*z; R[:,1,2]=2*y*z-2*x*w
     R[:,2,0]=2*x*z-2*y*w;   R[:,2,1]=2*y*z+2*x*w;   R[:,2,2]=1-2*x*x-2*y*y
     return R
 
+def g_axisangle(M):
+    trace = M[:,0,0]+M[:,1,1]+M[:,2,2]
+    theta = torch.acos(torch.clamp((trace-1)/2, -1+1e-6, 1-1e-6))
+    ax    = torch.stack([M[:,2,1]-M[:,1,2], M[:,0,2]-M[:,2,0], M[:,1,0]-M[:,0,1]], dim=1)
+    ax    = ax / (2*torch.sin(theta).unsqueeze(1) + 1e-8)
+    return ax * theta.unsqueeze(1)
+
 def f_axisangle(v):
-    """(B,4) -> (B,3,3)  — v[:,0] is tanh-mapped angle, v[:,1:4] is axis"""
-    B     = v.shape[0]
-    theta = torch.tanh(v[:, 0]) * math.pi
-    sin   = torch.sin(theta)
-    axis  = _normalize(v[:, 1:4])
-    qw = torch.cos(theta)
-    qx = axis[:,0]*sin; qy = axis[:,1]*sin; qz = axis[:,2]*sin
-    xx=(qx*qx).view(B,1); yy=(qy*qy).view(B,1); zz=(qz*qz).view(B,1)
-    xy=(qx*qy).view(B,1); xz=(qx*qz).view(B,1); yz=(qy*qz).view(B,1)
-    xw=(qx*qw).view(B,1); yw=(qy*qw).view(B,1); zw=(qz*qw).view(B,1)
-    r0=torch.cat((1-2*yy-2*zz,2*xy-2*zw,2*xz+2*yw),1)
-    r1=torch.cat((2*xy+2*zw,1-2*xx-2*zz,2*yz-2*xw),1)
-    r2=torch.cat((2*xz-2*yw,2*yz+2*xw,1-2*xx-2*yy),1)
-    return torch.cat((r0.view(B,1,3),r1.view(B,1,3),r2.view(B,1,3)),1)
+    theta = v.norm(dim=1, keepdim=True).clamp(min=1e-8)
+    ax = v / theta; theta = theta.squeeze(1)
+    c, s, t = torch.cos(theta), torch.sin(theta), 1 - torch.cos(theta)
+    x, y, z = ax[:,0], ax[:,1], ax[:,2]
+    R = torch.zeros(v.shape[0], 3, 3, device=v.device)
+    R[:,0,0]=t*x*x+c; R[:,0,1]=t*x*y-s*z; R[:,0,2]=t*x*z+s*y
+    R[:,1,0]=t*x*y+s*z; R[:,1,1]=t*y*y+c; R[:,1,2]=t*y*z-s*x
+    R[:,2,0]=t*x*z-s*y; R[:,2,1]=t*y*z+s*x; R[:,2,2]=t*z*z+c
+    return R
+
+def g_euler(M):
+    sy  = torch.sqrt(M[:,0,0]**2 + M[:,1,0]**2)
+    sg  = sy < 1e-6
+    x   = torch.atan2(M[:,2,1], M[:,2,2])
+    y   = torch.atan2(-M[:,2,0], sy)
+    z   = torch.atan2(M[:,1,0], M[:,0,0])
+    xs  = torch.atan2(-M[:,1,2], M[:,1,1])
+    return torch.stack([torch.where(sg, xs, x), y,
+                        torch.where(sg, torch.zeros_like(z), z)], dim=1)
 
 def f_euler(e):
-    """(B,3) -> (B,3,3)  ZYX Euler"""
-    cx,sx = torch.cos(e[:,0]),torch.sin(e[:,0])
-    cy,sy = torch.cos(e[:,1]),torch.sin(e[:,1])
-    cz,sz = torch.cos(e[:,2]),torch.sin(e[:,2])
-    R = torch.zeros(e.shape[0],3,3,device=e.device)
+    cx, sx = torch.cos(e[:,0]), torch.sin(e[:,0])
+    cy, sy = torch.cos(e[:,1]), torch.sin(e[:,1])
+    cz, sz = torch.cos(e[:,2]), torch.sin(e[:,2])
+    R = torch.zeros(e.shape[0], 3, 3, device=e.device)
     R[:,0,0]=cy*cz; R[:,0,1]=cz*sx*sy-cx*sz; R[:,0,2]=cx*cz*sy+sx*sz
     R[:,1,0]=cy*sz; R[:,1,1]=cx*cz+sx*sy*sz;  R[:,1,2]=cx*sy*sz-cz*sx
     R[:,2,0]=-sy;   R[:,2,1]=cy*sx;            R[:,2,2]=cx*cy
     return R
 
+
+def g_svd(M):
+    """(B,3,3) -> (B,9): flatten the matrix (identity mapping into representation space)."""
+    return M.reshape(-1, 9)
+
+def f_svd(r):
+    """
+    SVDO+(M) from Eq. 2: projects a 9D vector onto SO(3).
+      1. Reshape to (B,3,3)
+      2. SVD: M = U Sigma V^T
+      3. Replace singular values with diag(1,...,1, det(UV^T))
+         so the result is guaranteed to be in SO(3) (det=+1).
+      4. Return U Sigma' V^T
+    """
+    B = r.shape[0]
+    M = r.reshape(B, 3, 3)
+    U, _, Vh = torch.linalg.svd(M)          # U: (B,3,3), Vh: (B,3,3)
+    # det(UV^T) is +1 or -1; multiply last column of U to enforce det=+1
+    det = torch.linalg.det(U @ Vh)          # (B,)
+    # Build Sigma': diag(1, 1, det(UV^T))
+    sigma_prime = torch.ones(B, 3, device=r.device)
+    sigma_prime[:, 2] = det                  # last singular value = ±1
+    # U @ diag(sigma_prime) @ Vh
+    R = U * sigma_prime.unsqueeze(1) @ Vh   # (B,3,3)
+    return R
+
 REPS = [
-    ("6D",         f_6d,        6),
-    ("Quaternion", f_quat,      4),
-    ("Axis-angle", f_axisangle, 4),
-    ("Euler",      f_euler,     3),
+    ("6D",         g_6d,        f_6d,        6),
+    ("Quaternion", g_quat,      f_quat,      4),
+    ("Axis-angle", g_axisangle, f_axisangle, 3),
+    ("Euler",      g_euler,     f_euler,     3),
+    ("SVD",        g_svd,       f_svd,       9),
 ]
 
 # =============================================================================
@@ -367,8 +417,9 @@ if __name__ == "__main__":
     # =========================================================================
     # 9.  Plot — same 3-panel layout as sanity test and IK experiment
     # =========================================================================
-    ORDER  = ["6D", "Quaternion", "Axis-angle", "Euler"]
-    COLORS = {"6D":"red", "Quaternion":"green", "Axis-angle":"cyan", "Euler":"blue"}
+    COLORS = {"6D": "red", "Quaternion": "green", "Axis-angle": "cyan", "Euler": "blue", "SVD": "magenta"}
+    STYLES = {"6D": "-", "Quaternion": "-", "Axis-angle": "-", "Euler": "-", "SVD": "--"}
+    ORDER = ["6D", "Quaternion", "Axis-angle", "Euler", "SVD"]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     fig.text(0.01, 0.98, "Pose Estimation — 3D Point Clouds",
@@ -379,7 +430,7 @@ if __name__ == "__main__":
     for name in ORDER:
         xs = [x[0] for x in results[name]["mean_losses"]]
         ys = [x[1] for x in results[name]["mean_losses"]]
-        ax.plot(xs, ys, color=COLORS[name], linewidth=1.5, label=name)
+        ax.plot(xs, ys, color=COLORS[name], linestyle=STYLES[name], linewidth=1.5, label=name)
     ax.set_xlim(0, TOTAL_ITERS)
     ax.set_ylim(bottom=0)
     ax.xaxis.set_major_formatter(
