@@ -165,11 +165,38 @@ def f_euler(e):
     R[:,2,0]=-sy;   R[:,2,1]=cy*sx;            R[:,2,2]=cx*cy
     return R
 
+
+def g_svd(M):
+    """(B,3,3) -> (B,9): flatten the matrix (identity mapping into representation space)."""
+    return M.reshape(-1, 9)
+
+def f_svd(r):
+    """
+    SVDO+(M) from Eq. 2: projects a 9D vector onto SO(3).
+      1. Reshape to (B,3,3)
+      2. SVD: M = U Sigma V^T
+      3. Replace singular values with diag(1,...,1, det(UV^T))
+         so the result is guaranteed to be in SO(3) (det=+1).
+      4. Return U Sigma' V^T
+    """
+    B = r.shape[0]
+    M = r.reshape(B, 3, 3)
+    U, _, Vh = torch.linalg.svd(M)          # U: (B,3,3), Vh: (B,3,3)
+    # det(UV^T) is +1 or -1; multiply last column of U to enforce det=+1
+    det = torch.linalg.det(U @ Vh)          # (B,)
+    # Build Sigma': diag(1, 1, det(UV^T))
+    sigma_prime = torch.ones(B, 3, device=r.device)
+    sigma_prime[:, 2] = det                  # last singular value = ±1
+    # U @ diag(sigma_prime) @ Vh
+    R = U * sigma_prime.unsqueeze(1) @ Vh   # (B,3,3)
+    return R
+
 REPS = [
     ("6D",         g_6d,        f_6d,        6),
     ("Quaternion", g_quat,      f_quat,      4),
     ("Axis-angle", g_axisangle, f_axisangle, 3),
     ("Euler",      g_euler,     f_euler,     3),
+    ("SVD",        g_svd,       f_svd,       9),
 ]
 
 # =============================================================================
@@ -263,9 +290,9 @@ print("\nResults saved.", flush=True)
 # Plotting
 # =============================================================================
 
-colors = {"6D":"red", "Quaternion":"green", "Axis-angle":"cyan", "Euler":"blue"}
-styles = {"6D":"-",   "Quaternion":"-",     "Axis-angle":"-",    "Euler":"-"}
-order  = ["6D", "Quaternion", "Axis-angle", "Euler"]
+colors = {"6D":"red", "Quaternion":"green", "Axis-angle":"cyan", "Euler":"blue", "SVD":"magenta"}
+styles = {"6D":"-",   "Quaternion":"-",     "Axis-angle":"-",    "Euler":"-",   "SVD":"--"}
+order  = ["6D", "Quaternion", "Axis-angle", "Euler", "SVD"]
 
 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 fig.text(0.01, 0.97, "Sanity Test", fontsize=13, va='top', ha='left')
