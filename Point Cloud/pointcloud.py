@@ -391,7 +391,7 @@ if __name__ == "__main__":
     TRAIN_DIR   = "./small_points"
     TEST_DIR    = "./small_points_test"
     # TODO: Change back to reasonable number
-    TOTAL_ITERS = 50_000
+    TOTAL_ITERS = 5_000
     BATCH_SIZE  = 10    # 10 rotations per reference cloud per iteration
     N_AUG       = 100   # augmentations per test cloud
 
@@ -402,7 +402,7 @@ if __name__ == "__main__":
     test_clouds  = load_pointcloud_folder(TEST_DIR)
 
     results = {}
-    for name, f_fn, rep_dim in REPS:
+    for name, g_fn, f_fn, rep_dim in REPS:
         net, mean_losses = train_one_rep(
             name, f_fn, rep_dim, train_clouds, TOTAL_ITERS, BATCH_SIZE)
         final_errors = evaluate(net, f_fn, rep_dim, test_clouds, N_AUG)
@@ -468,7 +468,6 @@ if __name__ == "__main__":
     tbl.auto_set_font_size(False); tbl.set_fontsize(9); tbl.scale(1.1, 1.6)
     for (r, c), cell in tbl.get_celld().items():
         if r == 0:           cell.set_text_props(fontweight='bold')
-        if r == 1 and c > 0: cell.set_text_props(fontweight='bold')  # 6D row
     ax.set_xlabel("c. Errors at final iteration.", fontsize=9)
 
     plt.tight_layout()
