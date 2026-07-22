@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Adding the parent directory to the system path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import torch, torch.nn as nn, numpy as np, math, pickle, time
 import matplotlib
 matplotlib.use('Agg')
@@ -112,9 +118,9 @@ def geodesic_deg(M, Mp):
 # Training
 # =============================================================================
 
-TOTAL     = 500_000
+TOTAL     = 100
 BS        = 64
-LOG_EVERY = 5_000
+LOG_EVERY = 10
 
 # Larger eval batch — GPU can handle it in one shot
 EVAL_BATCH = 10_000

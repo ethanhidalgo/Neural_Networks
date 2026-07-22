@@ -23,17 +23,17 @@ for path in pkl_files:
     name = os.path.splitext(os.path.basename(path))[0]
     with open(path, "rb") as f:
         results[name] = pickle.load(f)
-    print(f"Loaded {name}: "
-          f"{len(results[name]['mean_errors'])} log points, "
-          f"{len(results[name]['final_errors'])} eval samples")
+    n_log  = len(results[name]["mean_errors"])
+    n_eval = len(results[name]["final_errors"])
+    print(f"Loaded {name}: {n_log} log points, {n_eval} eval samples")
 
-order = list(results.keys())   # plot in alphabetical / load order
+order = list(results.keys())
 print(f"\nRepresentations found: {order}")
 
 # =============================================================================
-# Colour / style palette — well-known reps get fixed colours so they always
-# look the same regardless of which subset is present; anything else gets
-# assigned from a fallback cycle.
+# Colour / style palette
+# Known reps get fixed colours; anything new gets assigned from a fallback cycle
+# so adding a new representation to reps.py requires no changes here.
 # =============================================================================
 
 KNOWN_COLORS = {
@@ -50,29 +50,33 @@ KNOWN_STYLES = {
     "Euler":      "-",
     "SVD":        "--",
 }
-
 FALLBACK_COLORS = ["orange", "brown", "purple", "olive", "pink", "gray"]
 FALLBACK_STYLES = ["-", "--", "-.", ":"]
 
-fallback_color_idx = 0
-fallback_style_idx = 0
 colors, styles = {}, {}
+fb_c = fb_s = 0
 for name in order:
     if name in KNOWN_COLORS:
         colors[name] = KNOWN_COLORS[name]
         styles[name] = KNOWN_STYLES[name]
     else:
-        colors[name] = FALLBACK_COLORS[fallback_color_idx % len(FALLBACK_COLORS)]
-        styles[name] = FALLBACK_STYLES[fallback_style_idx % len(FALLBACK_STYLES)]
-        fallback_color_idx += 1
-        fallback_style_idx += 1
+        colors[name] = FALLBACK_COLORS[fb_c % len(FALLBACK_COLORS)]
+        styles[name] = FALLBACK_STYLES[fb_s % len(FALLBACK_STYLES)]
+        fb_c += 1; fb_s += 1
 
-# Infer TOTAL from the last logged iteration across all reps
-TOTAL = max(
+# =============================================================================
+# Infer TOTAL from logged iterations.
+# Falls back to 500_000 if every rep has an empty mean_errors list
+# (e.g. pkl saved before any LOG_EVERY checkpoint was reached).
+# =============================================================================
+
+logged_totals = [
     results[name]["mean_errors"][-1][0]
     for name in order
-    if results[name]["mean_errors"]
-)
+    if results[name]["mean_errors"]   # skip reps with no log points yet
+]
+TOTAL = max(logged_totals) if logged_totals else 500_000
+print(f"Plotting up to iteration {TOTAL:,}")
 
 # =============================================================================
 # Plot
@@ -84,23 +88,29 @@ fig.text(0.01, 0.97, "Sanity Test", fontsize=13, va='top', ha='left')
 # (a) Mean error during training
 ax = axes[0]
 for name in order:
-    iters = [x[0] for x in results[name]["mean_errors"]]
-    errs  = [x[1] for x in results[name]["mean_errors"]]
+    me = results[name]["mean_errors"]
+    if not me:
+        print(f"  [{name}] no mean_errors logged yet — skipping curve")
+        continue
+    iters = [x[0] for x in me]
+    errs  = [x[1] for x in me]
     ax.plot(iters, errs, color=colors[name], linestyle=styles[name],
             linewidth=1.5, label=name)
 ax.set_xlim(0, TOTAL)
 ax.set_ylim(bottom=0)
 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x)//1000}k"))
 ax.set_xlabel("a. Mean errors during iterations.", fontsize=9)
-ax.legend(fontsize=8)
-ax.tick_params(labelsize=8)
-ax.grid(True, alpha=0.3)
+ax.legend(fontsize=8); ax.tick_params(labelsize=8); ax.grid(True, alpha=0.3)
 
 # (b) Percentile of final errors
 ax = axes[1]
 pcts = np.linspace(0, 100, 1000)
 for name in order:
-    vals = np.percentile(results[name]["final_errors"], pcts)
+    fe = results[name]["final_errors"]
+    if len(fe) == 0:
+        print(f"  [{name}] no final_errors yet — skipping percentile curve")
+        continue
+    vals = np.percentile(fe, pcts)
     ax.semilogy(pcts, vals, color=colors[name], linestyle=styles[name],
                 linewidth=1.5, label=name)
 ax.set_xlim(0, 100)
@@ -108,25 +118,23 @@ ax.set_ylim(0.1, 200)
 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
 ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: f"{y:g}°"))
 ax.set_xlabel(f"b. Percentile of errors at {TOTAL//1000}k iteration.", fontsize=9)
-ax.legend(fontsize=8, loc='upper left')
-ax.tick_params(labelsize=8)
+ax.legend(fontsize=8, loc='upper left'); ax.tick_params(labelsize=8)
 ax.grid(True, alpha=0.3, which='both')
 
-# (c) Summary table
-ax = axes[2]
-ax.axis('off')
+# (c) Summary table — show "—" for reps not yet evaluated
+ax = axes[2]; ax.axis('off')
 col_labels = ["", "Mean(°)", "Max(°)", "Std(°)"]
 table_data = []
 for name in order:
-    e = results[name]["final_errors"]
-    table_data.append([name, f"{e.mean():.2f}", f"{e.max():.2f}", f"{e.std():.2f}"])
+    fe = results[name]["final_errors"]
+    if len(fe) == 0:
+        table_data.append([name, "—", "—", "—"])
+    else:
+        table_data.append([name, f"{fe.mean():.2f}", f"{fe.max():.2f}", f"{fe.std():.2f}"])
 t = ax.table(cellText=table_data, colLabels=col_labels, loc='center', cellLoc='center')
-t.auto_set_font_size(False)
-t.set_fontsize(9)
-t.scale(1.1, 1.6)
+t.auto_set_font_size(False); t.set_fontsize(9); t.scale(1.1, 1.6)
 for (row, col), cell in t.get_celld().items():
-    if row == 0:
-        cell.set_text_props(fontweight='bold')
+    if row == 0: cell.set_text_props(fontweight='bold')
 ax.set_xlabel("c. Errors at final iteration.", fontsize=9)
 
 plt.tight_layout()
