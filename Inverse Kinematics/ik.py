@@ -33,22 +33,28 @@ We read only the rotation part.  The global hip position is fixed to zero
 so the network does not need to predict global translation.
 """
 
-import os, glob, math, time, pickle
+import sys
+import os
+
+# Adding the parent directory to the system path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import reps
+
+import glob, math, time, pickle
 import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib
-
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
+
+
 
 # ---------------------------------------------------------------------------
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}", flush=True)
 
 # =============================================================================
-# 1.  CMU skeleton (subject 01, hard-coded from public ASF)
+# CMU skeleton (subject 01, hard-coded from public ASF)
 # =============================================================================
 #
 # For each joint we store:
@@ -148,7 +154,7 @@ OFFSET_TENSOR = torch.tensor(
 
 
 # =============================================================================
-# 2.  AMC parser
+# AMC parser
 # =============================================================================
 
 def _rot_x(a):
@@ -246,7 +252,7 @@ def forward_kinematics_np(rots):
 
 
 # =============================================================================
-# 3.  Dataset
+# Dataset
 # =============================================================================
 
 def load_dataset(data_dir, max_files=None):
@@ -300,7 +306,7 @@ class PoseDataset(torch.utils.data.Dataset):
 
 
 # =============================================================================
-# 4.  Batched FK in PyTorch (used inside loss)
+# Batched FK in PyTorch (used inside loss)
 # =============================================================================
 
 def batch_fk(R_batch):
@@ -334,7 +340,7 @@ def batch_fk(R_batch):
 
 
 # =============================================================================
-# 5.  Y-axis augmentation
+# Y-axis augmentation
 # =============================================================================
 
 def make_ry_batch(B, device):
@@ -363,121 +369,7 @@ def augment_y(pos):
 
 
 # =============================================================================
-# Rotation representations
-# =============================================================================
-
-def g_6d(M):
-    return M[:, :, :2].reshape(-1, 6)
-
-def f_6d(r):
-    a1, a2 = r[:, 0:3], r[:, 3:6]
-    b1 = nn.functional.normalize(a1, dim=1)
-    b2 = nn.functional.normalize(a2 - (b1 * a2).sum(1, keepdim=True) * b1, dim=1)
-    b3 = torch.cross(b1, b2, dim=1)
-    return torch.stack([b1, b2, b3], dim=2)
-
-def g_quat(M):
-    B, dev = M.shape[0], M.device
-    t    = M[:,0,0] + M[:,1,1] + M[:,2,2] + 1
-    q_nz = torch.stack([M[:,2,1]-M[:,1,2], M[:,0,2]-M[:,2,0],
-                         M[:,1,0]-M[:,0,1], t], dim=1)
-    sgn32 = torch.sign(M[:,2,1])
-    sgn32 = torch.where(sgn32 == 0, torch.ones_like(sgn32), sgn32)
-    def ci(i):
-        v = M[:,i,0] + M[:,0,i]
-        return torch.where(v > 0,  torch.ones(B, device=dev),
-               torch.where(v < 0, -torch.ones(B, device=dev), sgn32**(i+1)))
-    q_z = torch.stack([
-        torch.sqrt(torch.clamp(M[:,0,0]+1, min=1e-8)),
-        ci(1)*torch.sqrt(torch.clamp(M[:,1,1]+1, min=1e-8)),
-        ci(2)*torch.sqrt(torch.clamp(M[:,2,2]+1, min=1e-8)),
-        torch.zeros(B, device=dev)], dim=1)
-    return torch.where((t.abs() > 1e-7).unsqueeze(1), q_nz, q_z)
-
-def f_quat(q):
-    q = nn.functional.normalize(q, dim=1)
-    x, y, z, w = q[:,0], q[:,1], q[:,2], q[:,3]
-    R = torch.zeros(q.shape[0], 3, 3, device=q.device)
-    R[:,0,0]=1-2*y*y-2*z*z; R[:,0,1]=2*x*y-2*z*w; R[:,0,2]=2*x*z+2*y*w
-    R[:,1,0]=2*x*y+2*z*w;   R[:,1,1]=1-2*x*x-2*z*z; R[:,1,2]=2*y*z-2*x*w
-    R[:,2,0]=2*x*z-2*y*w;   R[:,2,1]=2*y*z+2*x*w;   R[:,2,2]=1-2*x*x-2*y*y
-    return R
-
-def g_axisangle(M):
-    trace = M[:,0,0]+M[:,1,1]+M[:,2,2]
-    theta = torch.acos(torch.clamp((trace-1)/2, -1+1e-6, 1-1e-6))
-    ax    = torch.stack([M[:,2,1]-M[:,1,2], M[:,0,2]-M[:,2,0], M[:,1,0]-M[:,0,1]], dim=1)
-    ax    = ax / (2*torch.sin(theta).unsqueeze(1) + 1e-8)
-    return ax * theta.unsqueeze(1)
-
-def f_axisangle(v):
-    theta = v.norm(dim=1, keepdim=True).clamp(min=1e-8)
-    ax = v / theta; theta = theta.squeeze(1)
-    c, s, t = torch.cos(theta), torch.sin(theta), 1 - torch.cos(theta)
-    x, y, z = ax[:,0], ax[:,1], ax[:,2]
-    R = torch.zeros(v.shape[0], 3, 3, device=v.device)
-    R[:,0,0]=t*x*x+c; R[:,0,1]=t*x*y-s*z; R[:,0,2]=t*x*z+s*y
-    R[:,1,0]=t*x*y+s*z; R[:,1,1]=t*y*y+c; R[:,1,2]=t*y*z-s*x
-    R[:,2,0]=t*x*z-s*y; R[:,2,1]=t*y*z+s*x; R[:,2,2]=t*z*z+c
-    return R
-
-def g_euler(M):
-    sy  = torch.sqrt(M[:,0,0]**2 + M[:,1,0]**2)
-    sg  = sy < 1e-6
-    x   = torch.atan2(M[:,2,1], M[:,2,2])
-    y   = torch.atan2(-M[:,2,0], sy)
-    z   = torch.atan2(M[:,1,0], M[:,0,0])
-    xs  = torch.atan2(-M[:,1,2], M[:,1,1])
-    return torch.stack([torch.where(sg, xs, x), y,
-                        torch.where(sg, torch.zeros_like(z), z)], dim=1)
-
-def f_euler(e):
-    cx, sx = torch.cos(e[:,0]), torch.sin(e[:,0])
-    cy, sy = torch.cos(e[:,1]), torch.sin(e[:,1])
-    cz, sz = torch.cos(e[:,2]), torch.sin(e[:,2])
-    R = torch.zeros(e.shape[0], 3, 3, device=e.device)
-    R[:,0,0]=cy*cz; R[:,0,1]=cz*sx*sy-cx*sz; R[:,0,2]=cx*cz*sy+sx*sz
-    R[:,1,0]=cy*sz; R[:,1,1]=cx*cz+sx*sy*sz;  R[:,1,2]=cx*sy*sz-cz*sx
-    R[:,2,0]=-sy;   R[:,2,1]=cy*sx;            R[:,2,2]=cx*cy
-    return R
-
-
-def g_svd(M):
-    """(B,3,3) -> (B,9): flatten the matrix (identity mapping into representation space)."""
-    return M.reshape(-1, 9)
-
-def f_svd(r):
-    """
-    SVDO+(M) from Eq. 2: projects a 9D vector onto SO(3).
-      1. Reshape to (B,3,3)
-      2. SVD: M = U Sigma V^T
-      3. Replace singular values with diag(1,...,1, det(UV^T))
-         so the result is guaranteed to be in SO(3) (det=+1).
-      4. Return U Sigma' V^T
-    """
-    B = r.shape[0]
-    M = r.reshape(B, 3, 3)
-    U, _, Vh = torch.linalg.svd(M)          # U: (B,3,3), Vh: (B,3,3)
-    # det(UV^T) is +1 or -1; multiply last column of U to enforce det=+1
-    det = torch.linalg.det(U @ Vh)          # (B,)
-    # Build Sigma': diag(1, 1, det(UV^T))
-    sigma_prime = torch.ones(B, 3, device=r.device)
-    sigma_prime[:, 2] = det                  # last singular value = ±1
-    # U @ diag(sigma_prime) @ Vh
-    R = U * sigma_prime.unsqueeze(1) @ Vh   # (B,3,3)
-    return R
-
-REPS = [
-    ("6D",         g_6d,        f_6d,        6),
-    ("Quaternion", g_quat,      f_quat,      4),
-    ("Axis-angle", g_axisangle, f_axisangle, 3),
-    ("Euler",      g_euler,     f_euler,     3),
-    ("SVD",        g_svd,       f_svd,       9),
-]
-
-
-# =============================================================================
-# 7.  Network
+# Network
 # =============================================================================
 
 class IKNet(nn.Module):
@@ -502,7 +394,7 @@ class IKNet(nn.Module):
 
 
 # =============================================================================
-# 8.  Loss
+# Loss
 # =============================================================================
 
 def ik_loss(pred_rep, gt_pos, f_fn, rep_dim):
@@ -525,7 +417,7 @@ def ik_loss(pred_rep, gt_pos, f_fn, rep_dim):
 
 
 # =============================================================================
-# 9.  Training
+# Training Helpers
 # =============================================================================
 
 def train_one_rep(name, f_fn, rep_dim, train_loader,
@@ -569,7 +461,7 @@ def train_one_rep(name, f_fn, rep_dim, train_loader,
 
 
 # =============================================================================
-# 10.  Evaluation
+# Evaluation
 # =============================================================================
 
 def evaluate(net, f_fn, rep_dim, test_loader, n_aug=3):
@@ -599,103 +491,49 @@ def evaluate(net, f_fn, rep_dim, test_loader, n_aug=3):
 
 
 # =============================================================================
-# 11.  Main
+# Training
 # =============================================================================
 
-if __name__ == "__main__":
-    TRAIN_DIR = "./training_set"
-    TEST_DIR = "./test_set"
-    TOTAL_ITERS = 5_000
-    BATCH_SIZE = 64
+TRAIN_DIR = "./training_set"
+TEST_DIR = "./test_set"
+TOTAL_ITERS = 1_000_000
+BATCH_SIZE = 64
 
-    # ---- load data -----------------------------------------------------------
-    print("Loading training data...", flush=True)
-    train_pos, train_rot = load_dataset(TRAIN_DIR)
-    print("Loading test data...", flush=True)
-    test_pos, test_rot = load_dataset(TEST_DIR)
+# ---- load data -----------------------------------------------------------
+print("Loading training data...", flush=True)
+train_pos, train_rot = load_dataset(TRAIN_DIR)
+print("Loading test data...", flush=True)
+test_pos, test_rot = load_dataset(TEST_DIR)
 
-    train_ds = PoseDataset(train_pos, train_rot)
-    test_ds = PoseDataset(test_pos, test_rot)
+train_ds = PoseDataset(train_pos, train_rot)
+test_ds = PoseDataset(test_pos, test_rot)
 
-    # num_workers=0: DataLoader runs in the main process.
-    # Each worker fork copies the full dataset into its own address space;
-    # with 831 files already near RAM limits, multiple worker forks are what
-    # triggers the OOM kill. The GPU is the bottleneck here, not data loading,
-    # so num_workers=0 costs nothing in throughput.
-    train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=BATCH_SIZE, shuffle=True,
-        num_workers=0, pin_memory=(device.type == "cuda"), drop_last=True)
-    test_loader = torch.utils.data.DataLoader(
-        test_ds, batch_size=256, shuffle=False,
-        num_workers=0, pin_memory=(device.type == "cuda"))
+# num_workers=0: DataLoader runs in the main process.
+# Each worker fork copies the full dataset into its own address space;
+# with 831 files already near RAM limits, multiple worker forks are what
+# triggers the OOM kill. The GPU is the bottleneck here, not data loading,
+# so num_workers=0 costs nothing in throughput.
+train_loader = torch.utils.data.DataLoader(
+    train_ds, batch_size=BATCH_SIZE, shuffle=True,
+    num_workers=0, pin_memory=(device.type == "cuda"), drop_last=True)
+test_loader = torch.utils.data.DataLoader(
+    test_ds, batch_size=256, shuffle=False,
+    num_workers=0, pin_memory=(device.type == "cuda"))
 
-    # ---- train & evaluate ----------------------------------------------------
-    results = {}
-    for name, g_fn, f_fn, rep_dim in REPS:
-        net, mean_losses = train_one_rep(
-            name, f_fn, rep_dim, train_loader, TOTAL_ITERS, BATCH_SIZE)
-        final_errors = evaluate(net, f_fn, rep_dim, test_loader)
-        results[name] = {"mean_losses": mean_losses, "final_errors": final_errors}
-        print(f"  [{name}] mean={final_errors.mean():.4f} cm  "
-              f"max={final_errors.max():.4f} cm  "
-              f"std={final_errors.std():.4f} cm", flush=True)
+# ---- train & evaluate ----------------------------------------------------
+results = {}
+for name, g_fn, f_fn, rep_dim in reps.REPS:
+    net, mean_losses = train_one_rep(
+        name, f_fn, rep_dim, train_loader, TOTAL_ITERS, BATCH_SIZE)
+    final_errors = evaluate(net, f_fn, rep_dim, test_loader)
+    results[name] = {"mean_losses": mean_losses, "final_errors": final_errors}
+    print(f"  [{name}] mean={final_errors.mean():.4f} cm  "
+          f"max={final_errors.max():.4f} cm  "
+          f"std={final_errors.std():.4f} cm", flush=True)
 
-    pickle.dump(results, open("./ik_results.pkl", "wb"))
-    print("\nResults saved → ik_results.pkl", flush=True)
+    savefile = "./data/" + name + ".pkl"
+    pickle.dump(results[name], open(savefile, "wb"))
+    print("\nResults saved.", flush=True)
 
-    # ---- plot ----------------------------------------------------------------
-    COLORS = {"6D": "red", "Quaternion": "green", "Axis-angle": "cyan", "Euler": "blue", "SVD": "magenta"}
-    STYLES = {"6D": "-", "Quaternion": "-", "Axis-angle": "-", "Euler": "-", "SVD": "--"}
-    ORDER = ["6D", "Quaternion", "Axis-angle", "Euler", "SVD"]
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    fig.text(0.01, 0.98, "Inverse Kinematics — Human Poses",
-             fontsize=13, va='top', fontweight='normal')
 
-    # (a) training loss curve
-    ax = axes[0]
-    for name in ORDER:
-        xs = [x[0] for x in results[name]["mean_losses"]]
-        ys = [x[1] for x in results[name]["mean_losses"]]
-        ax.plot(xs, ys, color=COLORS[name], linestyle=STYLES[name], linewidth=1.5, label=name)
-    ax.set_xlim(0, TOTAL_ITERS)
-    ax.set_ylim(bottom=0)
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x) // 1000}k"))
-    ax.set_xlabel("a. Mean loss during iterations.", fontsize=9)
-    ax.legend(fontsize=8)
-    ax.tick_params(labelsize=8)
-    ax.grid(True, alpha=0.3)
-
-    # (b) percentile error at end of training
-    ax = axes[1]
-    pcts = np.linspace(0, 100, 1000)
-    for name in ORDER:
-        vals = np.percentile(results[name]["final_errors"], pcts)
-        ax.semilogy(pcts, vals, color=COLORS[name], linewidth=1.5, label=name)
-    ax.set_xlim(0, 100)
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: f"{y:g} cm"))
-    ax.set_xlabel("b. Percentile of errors at final iteration.", fontsize=9)
-    ax.legend(fontsize=8, loc='upper left')
-    ax.tick_params(labelsize=8)
-    ax.grid(True, alpha=0.3, which='both')
-
-    # (c) summary table
-    ax = axes[2];
-    ax.axis('off')
-    col_labels = ["", "Mean (cm)", "Max (cm)", "Std (cm)"]
-    rows = []
-    for name in ORDER:
-        e = results[name]["final_errors"]
-        rows.append([name, f"{e.mean():.4f}", f"{e.max():.4f}", f"{e.std():.4f}"])
-    tbl = ax.table(cellText=rows, colLabels=col_labels, loc='center', cellLoc='center')
-    tbl.auto_set_font_size(False);
-    tbl.set_fontsize(9);
-    tbl.scale(1.1, 1.6)
-    for (r, c), cell in tbl.get_celld().items():
-        if r == 0:          cell.set_text_props(fontweight='bold')
-    ax.set_xlabel("c. Errors at final iteration.", fontsize=9)
-
-    plt.tight_layout()
-    plt.savefig("./ik_results.png", dpi=150, bbox_inches='tight')
-    print("Plot saved → ik_results.png", flush=True)

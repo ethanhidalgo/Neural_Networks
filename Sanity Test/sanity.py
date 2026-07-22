@@ -8,7 +8,6 @@ import torch, torch.nn as nn, numpy as np, math, pickle, time
 import matplotlib
 matplotlib.use('Agg')
 
-# other files
 import reps
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

@@ -138,6 +138,6 @@ for (row, col), cell in t.get_celld().items():
 ax.set_xlabel("c. Errors at final iteration.", fontsize=9)
 
 plt.tight_layout()
-out = "./sanity.png"
+out = "./pointcloud.png"
 plt.savefig(out, dpi=150, bbox_inches='tight')
 print(f"\nPlot saved to {out}")

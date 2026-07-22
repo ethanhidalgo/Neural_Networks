@@ -123,7 +123,7 @@ ax.grid(True, alpha=0.3, which='both')
 
 # (c) Summary table — show "—" for reps not yet evaluated
 ax = axes[2]; ax.axis('off')
-col_labels = ["", "Mean(°)", "Max(°)", "Std(°)"]
+col_labels = ["", "Mean(cm)", "Max(cm)", "Std(cm)"]
 table_data = []
 for name in order:
     fe = results[name]["final_errors"]
@@ -138,6 +138,6 @@ for (row, col), cell in t.get_celld().items():
 ax.set_xlabel("c. Errors at final iteration.", fontsize=9)
 
 plt.tight_layout()
-out = "./sanity.png"
+out = "./ik.png"
 plt.savefig(out, dpi=150, bbox_inches='tight')
 print(f"\nPlot saved to {out}")
