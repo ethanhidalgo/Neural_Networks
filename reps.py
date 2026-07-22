@@ -1,5 +1,7 @@
 import torch, torch.nn as nn, numpy as np, math, pickle, time
 
+
+
 # =============================================================================
 # Rotation representations
 # =============================================================================
@@ -105,8 +107,108 @@ def f_svd(r):
     R = U * sigma_prime.unsqueeze(1) @ Vh   # (B,3,3)
     return R
 
+
+
+
+def _rot_around_axis(x, theta):
+    """
+    Rotation matrix for rotating by angle theta around unit axis x.
+    x: (B,3), theta: (B,) -> (B,3,3)
+    Uses Rodrigues formula: R = cos(t)*I + sin(t)*K + (1-cos(t))*(x x^T)
+    """
+    B = x.shape[0]; dev = x.device
+    c = torch.cos(theta); s = torch.sin(theta); t = 1 - c
+    K = torch.zeros(B, 3, 3, device=dev)
+    K[:, 0, 1] = -x[:, 2]; K[:, 0, 2] =  x[:, 1]
+    K[:, 1, 0] =  x[:, 2]; K[:, 1, 2] = -x[:, 0]
+    K[:, 2, 0] = -x[:, 1]; K[:, 2, 1] =  x[:, 0]
+    I   = torch.eye(3, device=dev).unsqueeze(0)
+    xxT = x.unsqueeze(2) * x.unsqueeze(1)
+    return c.view(B,1,1)*I + s.view(B,1,1)*K + t.view(B,1,1)*xxT
+
+
+def g_5d(M):
+    """
+    Reverse mapping SO(3) -> R^5.
+    R = [x  y  z] (columns).
+
+      v1,v2,v3 = components of x (first column)
+
+      a = 1/(1+x[3]),  b = -a*x[1]*x[2]   (1-indexed notation from paper)
+
+      y' = [1-a*x[1]^2,  b,  -x[1]]^T     (reference second column at theta=0)
+
+      theta = signed angle from y' to y, measured around axis x:
+        cos(theta) = y'_n . y
+        sin(theta) = (y'_n x y) . x   (cross product projected onto x for sign)
+
+      v4 = sin(theta),  v5 = cos(theta)
+    """
+    x = M[:, :, 0]   # (B,3) first column
+    y = M[:, :, 1]   # (B,3) second column
+
+    a = 1.0 / (1.0 + x[:, 2].clamp(min=-1+1e-6))
+    b = -a * x[:, 0] * x[:, 1]
+
+    y_prime = torch.stack([1 - a*x[:, 0]**2, b, -x[:, 0]], dim=1)
+
+    norm_yp   = y_prime.norm(dim=1, keepdim=True).clamp(min=1e-8)
+    y_prime_n = y_prime / norm_yp
+
+    cos_t = (y_prime_n * y).sum(dim=1).clamp(-1+1e-6, 1-1e-6)
+    cross = torch.cross(y_prime_n, y, dim=1)
+    sin_t = (cross * x).sum(dim=1)
+
+    return torch.stack([x[:, 0], x[:, 1], x[:, 2], sin_t, cos_t], dim=1)
+
+
+def f_5d(v):
+    """
+    Forward mapping R^5 -> SO(3).
+
+      x     = normalize([v1, v2, v3])
+      theta = atan2(v4, v5)   i.e. atan2(sin, cos)
+
+      a = 1/(1+x[3]),  b = -a*x[1]*x[2]
+
+      y' = [1-a*x[1]^2,  b,  -x[1]]^T
+      z' = [b,  1-a*x[2]^2,  -x[2]]^T
+
+      R_x(theta): rotation by theta around axis x (Rodrigues formula)
+
+      y = R_x(theta) @ y'
+      z = R_x(theta) @ z'
+
+      R = [x  y  z]  (as column matrix)
+    """
+    B   = v.shape[0]
+    dev = v.device
+
+    x     = nn.functional.normalize(v[:, 0:3], dim=1)
+    theta = torch.atan2(v[:, 3], v[:, 4])   # atan2(sin, cos) = theta
+
+    a = 1.0 / (1.0 + x[:, 2].clamp(min=-1+1e-6))
+    b = -a * x[:, 0] * x[:, 1]
+
+    y_prime = torch.stack([1 - a*x[:, 0]**2, b, -x[:, 0]], dim=1)
+    z_prime = torch.stack([b, 1 - a*x[:, 1]**2, -x[:, 1]], dim=1)
+
+    # Critical: rotate around x (the first column), not the global [1,0,0] axis
+    Rx = _rot_around_axis(x, theta)
+
+    y = torch.bmm(Rx, y_prime.unsqueeze(2)).squeeze(2)
+    z = torch.bmm(Rx, z_prime.unsqueeze(2)).squeeze(2)
+
+    Rout = torch.zeros(B, 3, 3, device=dev)
+    Rout[:, :, 0] = x
+    Rout[:, :, 1] = y
+    Rout[:, :, 2] = z
+    return Rout
+
+
 REPS = [
     ("6D",         g_6d,        f_6d,        6),
+    ("5D Frisvad",         g_5d,        f_5d,        5),
     ("Quaternion", g_quat,      f_quat,      4),
     ("Axis-angle", g_axisangle, f_axisangle, 3),
     ("Euler",      g_euler,     f_euler,     3),
