@@ -23,7 +23,7 @@ for path in pkl_files:
     name = os.path.splitext(os.path.basename(path))[0]
     with open(path, "rb") as f:
         results[name] = pickle.load(f)
-    n_log  = len(results[name]["mean_errors"])
+    n_log  = len(results[name]["mean_losses"])
     n_eval = len(results[name]["final_errors"])
     print(f"Loaded {name}: {n_log} log points, {n_eval} eval samples")
 
@@ -71,9 +71,9 @@ for name in order:
 # =============================================================================
 
 logged_totals = [
-    results[name]["mean_errors"][-1][0]
+    results[name]["mean_losses"][-1][0]
     for name in order
-    if results[name]["mean_errors"]   # skip reps with no log points yet
+    if results[name]["mean_losses"]   # skip reps with no log points yet
 ]
 TOTAL = max(logged_totals) if logged_totals else 500_000
 print(f"Plotting up to iteration {TOTAL:,}")
@@ -88,7 +88,7 @@ fig.text(0.01, 0.97, "Sanity Test", fontsize=13, va='top', ha='left')
 # (a) Mean error during training
 ax = axes[0]
 for name in order:
-    me = results[name]["mean_errors"]
+    me = results[name]["mean_losses"]
     if not me:
         print(f"  [{name}] no mean_errors logged yet — skipping curve")
         continue
