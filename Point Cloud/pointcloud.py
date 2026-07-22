@@ -283,7 +283,7 @@ def evaluate(net, f_fn, rep_dim, test_clouds, n_aug=100):
 TRAIN_DIR   = "./small_points"
 TEST_DIR    = "./small_points_test"
 # TODO: Change back to reasonable number
-TOTAL_ITERS = 1_000_000
+TOTAL_ITERS = 100
 BATCH_SIZE  = 10    # 10 rotations per reference cloud per iteration
 N_AUG       = 100   # augmentations per test cloud
 
@@ -294,7 +294,7 @@ print("Loading test point clouds...", flush=True)
 test_clouds  = load_pointcloud_folder(TEST_DIR)
 
 results = {}
-for name, g_fn, f_fn, rep_dim in REPS:
+for name, g_fn, f_fn, rep_dim in reps.REPS:
     net, mean_losses = train_one_rep(
         name, f_fn, rep_dim, train_clouds, TOTAL_ITERS, BATCH_SIZE)
     final_errors = evaluate(net, f_fn, rep_dim, test_clouds, N_AUG)
